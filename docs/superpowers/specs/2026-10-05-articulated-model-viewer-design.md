@@ -122,6 +122,30 @@ Defaults are δ = 0.08, `ctol` = 0.15 and `margin` = 1. They come from prototypi
 
 Each cell is accuracy on labelled points. Unlabelled points are 2–7% of the total.
 
+**Calibrated (Task 3, `python3 -m tests.calibrate_labelling`, 3 seeds per cell):** the best mean accuracy is δ = 0.08, `ctol` = 0.15, `margin` = 1 (96.0%), which confirms the prototype defaults.
+
+```
+delta ctol margin | rev0.0 rev0.01 rev0.02 pri0.0 pri0.01 pri0.02 | mean
+ 0.03  0.1      1 | 0.960 0.919 0.855 0.987 0.984 0.970 | 0.946
+ 0.03  0.1      2 | 0.920 0.877 0.823 0.985 0.980 0.964 | 0.925
+ 0.03 0.15      1 | 0.964 0.926 0.864 0.986 0.984 0.970 | 0.949
+ 0.03 0.15      2 | 0.956 0.904 0.842 0.985 0.980 0.964 | 0.939
+ 0.03 0.25      1 | 0.959 0.926 0.864 0.984 0.982 0.967 | 0.947
+ 0.03 0.25      2 | 0.959 0.910 0.846 0.985 0.980 0.963 | 0.940
+ 0.05  0.1      1 | 0.959 0.937 0.888 0.987 0.985 0.974 | 0.955
+ 0.05  0.1      2 | 0.917 0.899 0.857 0.985 0.980 0.969 | 0.934
+ 0.05 0.15      1 | 0.961 0.940 0.897 0.986 0.984 0.976 | 0.957
+ 0.05 0.15      2 | 0.953 0.936 0.889 0.984 0.980 0.970 | 0.952
+ 0.05 0.25      1 | 0.954 0.933 0.894 0.982 0.981 0.973 | 0.953
+ 0.05 0.25      2 | 0.954 0.943 0.900 0.983 0.980 0.970 | 0.955
+ 0.08  0.1      1 | 0.958 0.939 0.898 0.988 0.985 0.977 | 0.957
+ 0.08  0.1      2 | 0.916 0.899 0.867 0.984 0.980 0.970 | 0.936
+ 0.08 0.15      1 | 0.960 0.944 0.908 0.986 0.985 0.979 | 0.960
+ 0.08 0.15      2 | 0.951 0.936 0.906 0.984 0.980 0.972 | 0.955
+ 0.08 0.25      1 | 0.953 0.934 0.901 0.983 0.982 0.976 | 0.955
+ 0.08 0.25      2 | 0.952 0.945 0.921 0.983 0.980 0.973 | 0.959
+```
+
 ## 5. URDF export (`artsfm/urdf.py`)
 
 - MuJoCo needs `<mujoco><compiler strippath="false" discardvisual="false"/></mujoco>` inside the URDF so that `meshes/…` paths resolve. Setting `meshdir` doubles the path; this was verified with MuJoCo 3.3. Visual and collision elements get names, which silences duplicate-name warnings.
