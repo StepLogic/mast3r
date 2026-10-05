@@ -55,7 +55,7 @@ tests/
 ```
 
 ### 3.1 `views.py`: view selection
-- Select K start-state views (default K=5) spread around the object. For each one, select the end-state view with the nearest camera pose. Output: 2K image paths with state labels.
+- Select a seed start-state view (`--seed_view`, default 0) and its K−1 nearest start views by viewing direction (default K=5). The views are **clustered**, not spread around the object, because tracks must be visible in every selected view. For each one, select the nearest-direction end-state view, keeping end views distinct. Output: 2K image paths with state labels.
 - v1 uses the dataset's camera poses (`transforms_train_{start,end}.json`) **only to choose views**. This sits behind a single function `select_views(...)` so it can later be replaced by a MASt3R-retrieval selector.
 - View 0 is always a start-state view.
 
@@ -81,7 +81,7 @@ See §4.
   - axis-direction error (degrees, sign-agnostic);
   - axis-position error: the distance between the estimated and GT axis lines, as the closest-point distance for revolute joints only;
   - joint-state error: rotation angle against GT `|l − r|` in degrees, or translation against GT `|l − r|`;
-  - segmentation accuracy of base/part track labels against GT part labels. GT labels come from projecting GT part meshes (`gt/start/*.obj`) into view 0 and labelling each track by the mesh it hits.
+  - segmentation accuracy of base/part track labels against GT part labels. GT labels come from mapping each track's view-0 3D point into the GT frame and labelling it by the nearer GT mesh (`gt/start/static.obj` vs `dynamic.obj`). The median track-to-mesh distance is reported as an alignment sanity check.
 - Outputs to `out_dir`:
   - `result.json`: status, type, axis, state, metrics, thresholds used;
   - `articulation.ply`: tracks coloured by segment, plus a line for the axis;
@@ -111,14 +111,16 @@ With only two states, a ball joint is indistinguishable from a hinge: any single
 Non-degeneracy requires rank(M_start) = rank(M_end) = 4, which means at least 2 views per state with distinct rotations.
 
 ### 4.3 Algorithm
-1. **Segmentation** (paper §2.1)
-   - RANSAC: sample 4 columns of W, take their 4D column span, and score columns by residual to that span. The inlier threshold is τ = 0.01 × median depth, scaled per view (RMS over 3F rows).
+1. **Segmentation** (paper §2.1, metric variant)
+   - RANSAC: sample **3** tracks and fit the per-view rigid motion M_f by Kabsch, with S = view-0 points. This is the metric analogue of the paper's 4-track affine sample. A 4-column linear span degenerates on near-planar parts such as door panels.
+   - Score tracks by per-view RMS 3D residual. The inlier threshold is τ = `tau_frac` × median depth.
    - The best consensus set is the base. Remove it and repeat for the part.
-   - Remaining columns are outliers.
-   - Each subspace is refit by SVD on its inliers (rank 4).
+   - Remaining tracks are outliers.
+   - **Two-model reassignment:** each base/part track goes to the model with the smaller residual, then both are refit (up to 3 rounds). Without this, door tracks near the hinge, which barely move, are absorbed into the base and bias the axis.
 2. **Classification**
-   - Take orthonormal bases U_b and U_p of the two rank-4 column spaces.
-   - Compute the principal angles between them (SVD of U_bᵀ U_p).
+   - Normalise coordinates: shift by the view-0 base centroid and divide by the base RMS radius (as the paper centres each object; the radius scaling balances rotation and translation columns).
+   - Fit M (base) and M′ (part) by Kabsch on the normalised tracks.
+   - Compute principal angles between col(M) and col(M′), both 3F × 4.
    - d = the number of angles below θ_τ, and the type follows from §4.2.
 3. **Joint recovery**
    - *Nullspace (paper method):* the d-dimensional approximate nullspace of `[M | −M']` from the smallest singular vectors gives `[s; w]` pairs with `s = s'`.
@@ -131,6 +133,27 @@ Non-degeneracy requires rank(M_start) = rank(M_end) = 4, which means at least 2 
 ### 4.4 Thresholds
 τ, θ_τ and the RANSAC iteration count are calibrated on synthetic data (§6.3). Calibrated values are recorded in this spec and as code defaults. They are **not** tuned on the real evaluation objects.
 
+**Calibrated (2026-10-04, `python3 -m tests.calibrate`):** `tau_frac = 0.03`, `theta_deg = 3.0`, `n_iter = 500`.
+- The sweep covered 4 motions × 5 seeds, with 10% outliers.
+- Noise is per-coordinate σ in synthetic units: the object radius is ≈ 0.5 and the depth ≈ 3.5.
+- θ_τ is insensitive in [1.5°, 4.5°]. τ is the robustness lever.
+- τ = 0.02 and τ = 0.03 tie for noise ≤ 0.02, but only τ = 0.03 stays at 100% at σ = 0.03, so it was chosen.
+
+Type accuracy by setting and noise level:
+
+```
+tau_frac theta_deg | n=0.0 n=0.005 n=0.01 n=0.02 n=0.03
+    0.01       1.5 |  1.00  1.00  1.00  0.20  0.25
+    0.01       3.0 |  1.00  1.00  1.00  0.20  0.25
+    0.01       4.5 |  1.00  1.00  1.00  0.20  0.25
+    0.02       1.5 |  1.00  1.00  1.00  1.00  0.60
+    0.02       3.0 |  1.00  1.00  1.00  1.00  0.75
+    0.02       4.5 |  1.00  1.00  1.00  1.00  0.75
+    0.03       1.5 |  1.00  1.00  1.00  1.00  1.00
+    0.03       3.0 |  1.00  1.00  1.00  1.00  1.00
+    0.03       4.5 |  1.00  1.00  1.00  1.00  1.00
+```
+
 ## 5. Error handling
 
 Every outcome is written to `result.json` as `status` plus `reason`. Expected failures do not raise exceptions.
@@ -139,7 +162,7 @@ Every outcome is written to `result.json` as `status` plus `reason`. Expected fa
 |---|---|
 | < 30 complete tracks | retry with K = 3; then `insufficient_tracks` |
 | part inliers < 8 or < 5% of tracks | `rigid` (no articulation detected / part not visible) |
-| rotation < 3° and translation < 1% of scene scale | `ambiguous_small_motion`, no axis reported |
+| rotation < 3° and translation < 1% of scene scale (base RMS radius) | `ambiguous_small_motion`, no axis reported |
 | nullspace vs screw axis > 10° | output both, `inconsistent: true` |
 | rank(M_start) or rank(M_end) < 4, or GA failure | stop with error naming the offending views |
 

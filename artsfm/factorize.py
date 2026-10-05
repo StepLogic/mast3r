@@ -76,7 +76,7 @@ TYPE_BY_INTERSECTION = {4: 'rigid', 3: 'prismatic', 2: 'revolute'}  # else 'free
 
 @dataclass
 class Params:
-    tau_frac: float = 0.02         # RANSAC inlier threshold, fraction of median depth
+    tau_frac: float = 0.03         # RANSAC inlier threshold, fraction of median depth (calibrated, spec 4.4)
     theta_deg: float = 3.0         # principal angle below which a dimension is shared
     n_iter: int = 500              # RANSAC iterations per subspace
     min_part: int = 8              # minimum part inliers
