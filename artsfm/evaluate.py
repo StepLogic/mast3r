@@ -9,6 +9,10 @@ from scipy.spatial import cKDTree
 from artsfm.factorize import as_views
 
 GT_TYPES = {'rotate': 'revolute', 'translate': 'prismatic'}
+# trans.json axes live in the mesh (.obj) frame; GaussianArt's eval_axis.read_gt maps them
+# into the camera / *_rotate.ply frame with this rotation.
+R_COORD = np.array([[0., -1., 0.], [1., 0., 0.], [0., 0., 1.]]).T
+OPENGL_TO_OPENCV = np.diag([1.0, -1.0, -1.0, 1.0])
 
 
 def umeyama(src, dst):
@@ -42,8 +46,23 @@ def load_gt_joint(data_dir):
         raise ValueError(f'v1 handles single-joint objects; {data_dir} has {len(info)} joints')
     j = info[0]
     lr = j[j['type']]
-    return dict(type=GT_TYPES[j['type']], axis_o=np.array(j['axis']['o'], float),
-                axis_d=np.array(j['axis']['d'], float), state_change=abs(lr['l'] - lr['r']))
+    return dict(type=GT_TYPES[j['type']], axis_o=R_COORD @ np.array(j['axis']['o'], float),
+                axis_d=R_COORD @ np.array(j['axis']['d'], float), state_change=abs(lr['l'] - lr['r']))
+
+
+def align_poses(est_c2w, gt_c2w_opengl):
+    """Sim(3) (s, R, t) mapping the reconstruction's world frame into the GT frame.
+
+    Rotation comes from camera orientations (well conditioned even for clustered views),
+    then scale and translation from camera centres. GT poses are OpenGL (-z forward).
+    """
+    gt = gt_c2w_opengl @ OPENGL_TO_OPENCV
+    M = sum(g[:3, :3] @ e[:3, :3].T for g, e in zip(gt, est_c2w))
+    U, _, Vt = np.linalg.svd(M)
+    R = U @ np.diag([1.0, 1.0, np.sign(np.linalg.det(U @ Vt))]) @ Vt
+    ce, cg = est_c2w[:, :3, 3] @ R.T, gt[:, :3, 3]
+    s = float(((cg - cg.mean(0)) * (ce - ce.mean(0))).sum() / ((ce - ce.mean(0)) ** 2).sum())
+    return s, R, cg.mean(0) - s * ce.mean(0)
 
 
 def view0_to_gt(x, cam2w0, sim, is_dir=False):
@@ -57,8 +76,8 @@ def view0_to_gt(x, cam2w0, sim, is_dir=False):
 
 def gt_part_labels(points_gt, data_dir, n_samples=20000):
     clouds = []
-    for name in ('static', 'dynamic'):
-        mesh = trimesh.load(os.path.join(data_dir, 'gt', 'start', f'{name}.obj'), force='mesh')
+    for name in ('static', 'dynamic'):  # camera-frame meshes (the .obj files use another frame)
+        mesh = trimesh.load(os.path.join(data_dir, 'gt', 'start', f'start_{name}_rotate.ply'), force='mesh')
         clouds.append(mesh.sample(n_samples))
     d = np.stack([cKDTree(c).query(points_gt)[0] for c in clouds], 1)
     return d.argmin(1), d.min(1)
@@ -67,8 +86,9 @@ def gt_part_labels(points_gt, data_dir, n_samples=20000):
 def evaluate(result, W, geom, view_paths, frames_by_path, data_dir):
     gt = load_gt_joint(data_dir)
     est_c = geom['cam2w'][:, :3, 3]
-    gt_c = np.array([frames_by_path[p][:3, 3] for p in view_paths])
-    sim = umeyama(est_c, gt_c)
+    gt_poses = np.array([frames_by_path[p] for p in view_paths])
+    gt_c = gt_poses[:, :3, 3]
+    sim = align_poses(geom['cam2w'], gt_poses)
     cam2w0 = geom['cam2w'][0]
     m = dict(gt_type=gt['type'], pred_type=result['type'], type_correct=result['type'] == gt['type'],
              sim_scale=sim[0],

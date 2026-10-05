@@ -1,7 +1,8 @@
 import json
 import numpy as np
 
-from artsfm.evaluate import umeyama, axis_angle_err, line_distance, load_gt_joint, view0_to_gt
+from artsfm.evaluate import (umeyama, axis_angle_err, line_distance, load_gt_joint, view0_to_gt,
+                             align_poses, gt_part_labels)
 from tests.synth import rot
 
 
@@ -32,7 +33,9 @@ def test_load_gt_joint(tmp_path):
         {'axis': {'o': [0, 1, 2], 'd': [1, 0, 0]}, 'rotate': {'l': 68.0, 'r': 32.0}, 'type': 'rotate'}]}))
     g = load_gt_joint(str(tmp_path))
     assert g['type'] == 'revolute' and abs(g['state_change'] - 36.0) < 1e-12
-    np.testing.assert_allclose(g['axis_o'], [0, 1, 2])
+    # GaussianArt's read_gt maps trans.json axes into the camera frame with R_coord
+    np.testing.assert_allclose(g['axis_o'], [1, 0, 2])
+    np.testing.assert_allclose(g['axis_d'], [0, -1, 0])
 
 
 def test_view0_to_gt_roundtrip():
@@ -47,3 +50,33 @@ def test_view0_to_gt_roundtrip():
     d = np.array([[0, 0, 1.0]])
     np.testing.assert_allclose(view0_to_gt(d, cam2w0, sim, is_dir=True),
                                d @ cam2w0[:3, :3].T @ sim[1].T)
+
+
+def test_align_poses_recovers_similarity_from_opengl_gt():
+    rng = np.random.default_rng(1)
+    s, R, t = 1.7, rot([1, 2, 0], 0.8), np.array([0.5, -1, 2.0])
+    flip = np.diag([1, -1, -1, 1.0])
+    est, gt = [], []
+    for i in range(6):  # clustered cameras, as in view selection
+        c2w = np.eye(4)
+        c2w[:3, :3] = rot([0, 0, 1], 0.1 * i) @ rot([1, 0, 0], 0.05 * i)
+        c2w[:3, 3] = rng.uniform(-0.2, 0.2, 3) + [0, 0, -4]
+        est.append(c2w)
+        g = np.eye(4)
+        g[:3, :3] = R @ c2w[:3, :3]
+        g[:3, 3] = s * R @ c2w[:3, 3] + t
+        gt.append(g @ flip)  # GT stored in OpenGL convention
+    s_, R_, t_ = align_poses(np.array(est), np.array(gt))
+    assert abs(s_ - s) < 1e-9
+    np.testing.assert_allclose(R_, R, atol=1e-9)
+    np.testing.assert_allclose(t_, t, atol=1e-9)
+
+
+def test_gt_part_labels_from_camera_frame_ply(tmp_path):
+    import trimesh
+    (tmp_path / 'gt/start').mkdir(parents=True)
+    trimesh.creation.box([1, 1, 1]).export(tmp_path / 'gt/start/start_static_rotate.ply')
+    trimesh.creation.box([1, 1, 1]).apply_translation([3, 0, 0]).export(tmp_path / 'gt/start/start_dynamic_rotate.ply')
+    lab, dist = gt_part_labels(np.array([[0.5, 0, 0], [2.5, 0, 0], [0, 0.5, 0.1]]), str(tmp_path))
+    assert lab.tolist() == [0, 1, 0]
+    assert dist.max() < 0.05

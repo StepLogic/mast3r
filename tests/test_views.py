@@ -27,3 +27,16 @@ def test_load_frames_appends_png(tmp_path):
     frames = load_frames(str(tmp_path), 'start')
     assert frames[0][0] == str(tmp_path / 'start/train/rgba/0000.png')
     assert frames[0][1].shape == (4, 4)
+
+
+def test_model_intrinsics_from_fov():
+    from artsfm.views import model_intrinsics
+    fov = 2 * np.arctan(0.5)  # f = 800 px at 800 px width
+    K = model_intrinsics(fov, orig_wh=(800, 800), model_hw=(384, 512))
+    np.testing.assert_allclose(K, [[512, 0, 256], [0, 512, 192], [0, 0, 1]])
+
+
+def test_load_fov(tmp_path):
+    from artsfm.views import load_fov
+    (tmp_path / 'transforms_train_start.json').write_text(json.dumps({'camera_angle_x': 0.7, 'frames': []}))
+    assert load_fov(str(tmp_path)) == 0.7
