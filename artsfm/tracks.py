@@ -29,40 +29,42 @@ def load_pair_correspondences(cache_dir, image_paths, subsample=8, desc_conf='de
     return out
 
 
-def build_tracks(pair_corres, n_views, cell=8):
-    """Union-find over (view, pixel cell) nodes; keep tracks seen exactly once in every view."""
-    parent = {}
+def build_tracks(pair_corres, n_views, cell=8, tol=4.0):
+    """Star tracks anchored on view 0: one track per view-0 pixel cell, from direct (0, f) matches.
 
-    def find(x):
-        parent.setdefault(x, x)
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
+    Chaining matches transitively through quantised cells percolates into one giant component
+    under matching noise, so only matches against the reference view are used. A cell is
+    dropped when its matches in some view disagree by more than `tol` pixels or are missing.
+    """
+    per_view = []  # for each f >= 1: dict cell -> (list of view-0 px, list of view-f px)
+    for f in range(1, n_views):
+        if (0, f) in pair_corres:
+            xy0, xyf = pair_corres[0, f]
+        elif (f, 0) in pair_corres:
+            xyf, xy0 = pair_corres[f, 0]
+        else:
+            return np.zeros((0, n_views, 2))
+        cells = defaultdict(lambda: ([], []))
+        for a, b in zip(xy0, xyf):
+            c = cells[int(a[0] // cell), int(a[1] // cell)]
+            c[0].append(a)
+            c[1].append(b)
+        per_view.append(cells)
 
-    obs = defaultdict(list)  # node -> list of pixels
-    for (i, j), (xy_i, xy_j) in pair_corres.items():
-        for a, b in zip(xy_i, xy_j):
-            na = (i, int(a[0] // cell), int(a[1] // cell))
-            nb = (j, int(b[0] // cell), int(b[1] // cell))
-            obs[na].append(a)
-            obs[nb].append(b)
-            ra, rb = find(na), find(nb)
-            if ra != rb:
-                parent[ra] = rb
-
-    groups = defaultdict(list)
-    for node in obs:
-        groups[find(node)].append(node)
     tracks = []
-    for nodes in groups.values():
-        views = [n[0] for n in nodes]
-        if len(nodes) != n_views or len(set(views)) != n_views:
-            continue  # incomplete, or two cells in one view (conflict)
+    for key in set.intersection(*(set(c) for c in per_view)):
         t = np.zeros((n_views, 2))
-        for n in nodes:
-            t[n[0]] = np.mean(obs[n], 0)
-        tracks.append(t)
+        anchors = []
+        for f, cells in enumerate(per_view, start=1):
+            p0, pf = (np.asarray(x, float) for x in cells[key])
+            med = np.median(pf, 0)
+            if np.abs(pf - med).max() > tol:
+                break
+            t[f] = med
+            anchors.append(p0)
+        else:
+            t[0] = np.concatenate(anchors).mean(0)
+            tracks.append(t)
     return np.array(tracks).reshape(-1, n_views, 2)
 
 
