@@ -261,3 +261,60 @@ def foreground_masks(paths, model_hw, confs=None, conf_thr=1.5):
             raise ValueError(f'mask for {p} has shape {m.shape}, expected {tuple(model_hw)}')
         masks.append(m)
     return masks, '+'.join(sorted(sources))
+
+
+def assemble_model(geom, paths, states, W, result, out_dir, obj_name, params=LabelParams(),
+                   frames_by_path=None, max_points=150_000):
+    """Dense-label, fuse and write <out_dir>/model/. Returns the model dir, or None if nothing to build."""
+    import os
+    from artsfm.factorize import as_views
+    from artsfm.model_io import write_model
+
+    if result.get('status') != 'ok':
+        print(f"no articulation to build: {result.get('status')} — {result.get('reason', '')}")
+        return None
+    states = np.asarray(states)
+    joint = joint_from_result(result)
+    T = joint_transform(joint, joint['observed'])
+    masks, source = foreground_masks(paths, geom['depths'][0].shape, geom.get('confs'))
+    labels = np.asarray(result['labels'])
+    P0 = as_views(W)[0]
+    base_pts = P0[labels == 0]
+    radius = float(np.sqrt(((base_pts - base_pts.mean(0)) ** 2).sum(1).mean()))
+    views = label_dense(geom, masks, states, T, P0, labels, radius, params)
+    clouds = fuse(views, states, T, max_points)
+    hulls = {name: convex_hull_or_none(clouds[name][0]) for name in ('base', 'part')}
+
+    n_all = sum(len(v['label']) for v in views)
+    n_unl = sum(int((v['label'] == -1).sum()) for v in views)
+    warnings = []
+    if len(clouds['part'][0]) < 500:
+        warnings.append('part sparsely observed')
+    if n_all and n_unl > 0.4 * n_all:
+        warnings.append('many points unlabelled')
+    if joint['type'] == 'free':
+        warnings.append('screw joint (not representable in URDF); URDF export disabled')
+    for name in ('base', 'part'):
+        if hulls[name] is None:
+            warnings.append(f'no {name} hull (too few or coplanar points)')
+
+    gt_frame = None
+    if frames_by_path is not None:
+        from artsfm.evaluate import align_poses
+        s, R, t = align_poses(geom['cam2w'], np.array([frames_by_path[p] for p in paths]))
+        up = geom['cam2w'][0][:3, :3].T @ R.T @ np.array([0, 0, 1.0])
+        gt_frame = dict(up=up / np.linalg.norm(up), scale=s, sim_R=R, sim_t=t, cam2w0=geom['cam2w'][0])
+
+    model = dict(
+        object=obj_name, frame='view0_camera_opencv', units='reconstruction', joint=joint, motion=T,
+        up=estimate_up(geom['cam2w']), gt_frame=gt_frame,
+        labelling=dict(method='motion_hypothesis', fallback='knn_tracks', **vars(params),
+                       n_base=int(sum((v['label'] == 0).sum() for v in views)),
+                       n_part=int(sum((v['label'] == 1).sum() for v in views)),
+                       n_fallback=int(sum(v['fallback'].sum() for v in views)),
+                       n_unlabelled=n_unl, mask_source=source),
+        warnings=warnings,
+        source=dict(result='../result.json', views=[os.path.basename(p) for p in paths]))
+    model_dir = os.path.join(out_dir, 'model')
+    write_model(model_dir, model, clouds, hulls)
+    return model_dir
