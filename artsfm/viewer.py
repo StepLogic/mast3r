@@ -112,3 +112,9 @@ def info_markdown(model, result=None):
         lines.append(f"- vs ground truth: axis error {m['axis_angle_err_deg']:.1f}°"
                      + (f", state error {m['state_err']:.1f}" if m.get('state_err') is not None else ''))
     return '\n'.join(lines)
+
+
+def range_update(joint, extend, value):
+    """Slider bounds for the current 'beyond observed range' setting, with the value clamped into them."""
+    lo, hi, _ = slider_spec(joint, extend)
+    return lo, hi, float(min(max(value, lo), hi))

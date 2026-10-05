@@ -31,3 +31,5 @@ def test_driver_records_data_dir_and_seed(tmp_path, monkeypatch):
     monkeypatch.setattr(ra, 'write_outputs', lambda *a: None)
     out = ra.run('/data', str(tmp_path), 'w.pth', k=5, seed_view=3, device='cpu')
     assert out['metrics']['data_dir'] == '/data' and out['metrics']['seed_view'] == 3
+    assert out['metrics']['optim_level'] == 'refine' and out['metrics']['niter1'] == 300
+    assert out['metrics']['known_intrinsics'] is True

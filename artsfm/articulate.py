@@ -284,6 +284,8 @@ def assemble_model(geom, paths, states, W, result, out_dir, obj_name, params=Lab
     views = label_dense(geom, masks, states, T, P0, labels, radius, params)
     clouds = fuse(views, states, T, max_points)
     hulls = {name: convex_hull_or_none(clouds[name][0]) for name in ('base', 'part')}
+    if len(clouds['part'][0]) < 500:
+        hulls['part'] = None   # spec §7: a sparsely observed part gets no hull, so URDF export refuses
 
     n_all = sum(len(v['label']) for v in views)
     n_unl = sum(int((v['label'] == -1).sum()) for v in views)

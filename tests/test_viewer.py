@@ -55,3 +55,14 @@ def test_info_markdown_mentions_warnings_and_metrics(tmp_path):
     m['warnings'] = ['part sparsely observed']
     txt = info_markdown(m, dict(metrics=dict(axis_angle_err_deg=2.7, state_err=0.4)))
     assert 'revolute' in txt and 'part sparsely observed' in txt and '2.7' in txt
+
+
+def test_range_update_clamps_value_when_narrowing():
+    from artsfm.viewer import range_update
+    j = dict(type='revolute', lower=0.0, upper=np.deg2rad(40), unit='rad')
+    lo, hi, v = range_update(j, True, -15.0)
+    assert lo == -20.0 and v == -15.0
+    lo, hi, v = range_update(j, False, -15.0)
+    assert (lo, v) == (0.0, 0.0)
+    lo, hi, v = range_update(j, False, 55.0)
+    assert round(v, 6) == 40.0

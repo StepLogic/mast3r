@@ -104,24 +104,43 @@ def write_urdf(model_dir, out_dir=None, scale=None, use_gt=False, lower=None, up
 
 
 def check_urdf(urdf_path):
-    """Load in MuJoCo, set the joint to its upper limit, compare the part pose with the model's motion."""
+    """Load in MuJoCo and compare the meshes MuJoCo actually placed with where the model puts them.
+
+    For q = lower and q = upper: every mesh geom's loaded vertices, transformed by MuJoCo's own
+    forward kinematics, must coincide with the exported hulls moved by the model's joint motion
+    (base hull fixed, part hull by T(q)). Returns the max relative (to object size) distance.
+    """
     import mujoco
+    from scipy.spatial import cKDTree
     ex = json.load(open(os.path.join(os.path.dirname(urdf_path), 'export.json')))
     m = load_model(ex['model_dir'])
     E = dict(R=np.array(ex['R']), s=ex['s'], t=np.array(ex['t']))
     mdl = mujoco.MjModel.from_xml_path(urdf_path)
     d = mujoco.MjData(mdl)
-    d.qpos[0] = ex['upper']
-    mujoco.mj_kinematics(mdl, d)
-    bid = mujoco.mj_name2id(mdl, mujoco.mjtObj.mjOBJ_BODY, 'link_1')
-    R_mj, x_mj = d.xmat[bid].reshape(3, 3), d.xpos[bid]
-    q_model = ex['upper'] if ex['type'] == 'revolute' else ex['upper'] / ex['s']
-    T = joint_transform(m['joint'], q_model)
-    P = m['part']['pts'][:500]
-    expected = apply_export(E, P @ T[:3, :3].T + T[:3, 3])
-    got = (apply_export(E, P) - np.array(ex['pivot'])) @ R_mj.T + x_mj
-    extent = float(np.ptp(apply_export(E, m['base']['pts']), 0).max())
-    return float(np.linalg.norm(got - expected, axis=1).max() / max(extent, 1e-12))
+    part_body = mujoco.mj_name2id(mdl, mujoco.mjtObj.mjOBJ_BODY, 'link_1')
+    base_want = apply_export(E, m['base_hull'].vertices)
+    extent = float(np.ptp(base_want, 0).max())
+    worst = 0.0
+    for q in (ex['lower'], ex['upper']):
+        d.qpos[0] = q
+        mujoco.mj_kinematics(mdl, d)
+        q_model = q if ex['type'] == 'revolute' else q / ex['s']
+        T = joint_transform(m['joint'], q_model)
+        part_want = apply_export(E, m['part_hull'].vertices @ T[:3, :3].T + T[:3, 3])
+        n_mesh = 0
+        for g in range(mdl.ngeom):
+            if mdl.geom_type[g] != mujoco.mjtGeom.mjGEOM_MESH:
+                continue
+            n_mesh += 1
+            mid = mdl.geom_dataid[g]
+            adr, n = mdl.mesh_vertadr[mid], mdl.mesh_vertnum[mid]
+            V = mdl.mesh_vert[adr:adr + n] @ d.geom_xmat[g].reshape(3, 3).T + d.geom_xpos[g]
+            want = part_want if mdl.geom_bodyid[g] == part_body else base_want
+            dist = max(cKDTree(want).query(V)[0].max(), cKDTree(V).query(want)[0].max())
+            worst = max(worst, float(dist) / max(extent, 1e-12))
+        if n_mesh < 4:
+            raise ValueError(f'expected 4 mesh geoms (visual + collision per link), MuJoCo loaded {n_mesh}')
+    return worst
 
 
 def main():

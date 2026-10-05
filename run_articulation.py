@@ -60,6 +60,9 @@ def run(data_dir, out_dir, weights, k=5, seed_view=0, optim_level='refine', devi
     metrics['views'] = [os.path.relpath(p, data_dir) for p in paths]
     metrics['data_dir'] = data_dir
     metrics['seed_view'] = seed_view
+    metrics['optim_level'] = optim_level
+    metrics['niter1'], metrics['niter2'] = niter1, niter2
+    metrics['known_intrinsics'] = bool(known_intrinsics)
     write_outputs(out_dir, result, metrics, W, geom)
     if build_model:
         from artsfm.articulate import assemble_model

@@ -87,3 +87,28 @@ def test_write_urdf_refuses_without_hull(tmp_path):
     os.remove(os.path.join(d, 'part_hull.obj'))
     with pytest.raises(ValueError, match='hull'):
         write_urdf(d)
+
+
+def test_check_detects_misplaced_exported_mesh(tmp_path):
+    import trimesh, json
+    from artsfm.urdf import write_urdf, check_urdf
+    urdf = write_urdf(_make_model(tmp_path))
+    ex = json.load(open(os.path.join(os.path.dirname(urdf), 'export.json')))
+    for f in ('link_1.obj', 'link_1_collision.obj'):   # classic bug: mesh not offset by -pivot
+        p = os.path.join(os.path.dirname(urdf), 'meshes', f)
+        m = trimesh.load(p, force='mesh')
+        m.vertices = m.vertices + np.array(ex['pivot'])
+        m.export(p)
+    assert check_urdf(urdf) > 1e-3
+
+
+def test_check_detects_misplaced_base_mesh(tmp_path):
+    import trimesh
+    from artsfm.urdf import write_urdf, check_urdf
+    urdf = write_urdf(_make_model(tmp_path))
+    for f in ('base.obj', 'base_collision.obj'):
+        p = os.path.join(os.path.dirname(urdf), 'meshes', f)
+        m = trimesh.load(p, force='mesh')
+        m.vertices = m.vertices + np.array([0, 0, 0.5])
+        m.export(p)
+    assert check_urdf(urdf) > 1e-3

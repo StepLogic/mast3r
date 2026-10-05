@@ -27,7 +27,9 @@
 
 Counts are before fusion. Each saved link cloud is voxel-downsampled to at most 150k points.
 
-**URDF:** 45247 exported with `--use_gt_frame`. The MuJoCo check passes, with a max relative error of 9.4e-7 (6.2e-7 when exported from the app).
+**URDF:** 45247 exported in its own frame, with gravity from the averaged camera up vectors and reconstruction scale (`python3 -m artsfm.urdf outputs/artsfm/StorageFurniture_45247/model`).
+- The MuJoCo check passes. After the review fix it compares the mesh vertices MuJoCo actually loaded, at both joint limits, against the model's motion.
+- Do **not** use `--use_gt_frame` for 45247 or 45176. Their GT Sim(3) alignment is broken (see below), so the up vector and scale it supplies are wrong. A passing MuJoCo check cannot detect that, because it verifies that the URDF matches the model, not that the model matches reality.
 
 ## Labelling quality
 

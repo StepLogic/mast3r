@@ -11,7 +11,8 @@ import gradio as gr
 
 from artsfm.model_io import load_model
 from artsfm.urdf import check_urdf, write_urdf
-from artsfm.viewer import build_glb, info_markdown, list_models, slider_spec, sweep_values, to_joint_value
+from artsfm.viewer import (build_glb, info_markdown, list_models, range_update, slider_spec, sweep_values,
+                           to_joint_value)
 
 
 def _result_for(model_dir):
@@ -71,9 +72,9 @@ def build_app(root='outputs/artsfm'):
             return (m, gr.update(minimum=lo, maximum=hi, value=0, label=f'Joint value ({unit})'),
                     render(m, 0, 'RGB', False), info_markdown(m, _result_for(path)))
 
-        def set_range(m, e):
-            lo, hi, unit = slider_spec(m['joint'], extend=e)
-            return gr.update(minimum=lo, maximum=hi)
+        def set_range(m, e, v):
+            lo, hi, v = range_update(m['joint'], e, v)
+            return gr.update(minimum=lo, maximum=hi, value=v)
 
         def play_fn(m, c, h):
             for v in sweep_values(m['joint']):
@@ -85,7 +86,7 @@ def build_app(root='outputs/artsfm'):
         slider.release(render, [state, slider, colour, hulls], view)
         colour.change(render, [state, slider, colour, hulls], view)
         hulls.change(render, [state, slider, colour, hulls], view)
-        extend.change(set_range, [state, extend], slider)
+        extend.change(set_range, [state, extend, slider], slider)
         play.click(play_fn, [state, colour, hulls], view)
         export_btn.click(export_package, [state, extend], [package, export_msg])
     return app

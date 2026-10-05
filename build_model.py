@@ -35,15 +35,29 @@ def main():
     paths = [os.path.join(data_dir, v) for v in m['views']]
     states = np.array([0] * k + [1] * k)
     device = a.device or ('cuda' if torch.cuda.is_available() else 'cpu')
-    fov = None if a.estimate_intrinsics else load_fov(data_dir)
+    # reproduce the run's own reconstruction settings (older result.json files lack them: defaults)
+    known = m.get('known_intrinsics', True) and not a.estimate_intrinsics
+    fov = load_fov(data_dir) if known else None
     geom, W = ra.reconstruct_and_track(paths, os.path.join(a.out_dir, f'cache_k{k}'), a.weights, device,
-                                       'refine', 300, 300, fov)
+                                       m.get('optim_level', 'refine'), m.get('niter1', 300), m.get('niter2', 300), fov)
     result = analyze(W, states)
-    if result['type'] != saved['result']['type']:
-        print(f"note: re-analysis gives {result['type']}, result.json says {saved['result']['type']}; using re-analysis")
+    old = saved['result']
+    if result.get('type') != old.get('type'):
+        print(f"note: re-analysis gives {result.get('type')}, result.json says {old.get('type')}; using re-analysis")
+    if result.get('axis_d') is not None and old.get('axis_d') is not None:
+        c = abs(np.dot(result['axis_d'], old['axis_d'])) / np.linalg.norm(result['axis_d']) / np.linalg.norm(old['axis_d'])
+        drift = float(np.degrees(np.arccos(np.clip(c, -1, 1))))
+        if drift > 1.0:
+            print(f'note: re-analysis axis differs by {drift:.1f}° from result.json')
+    if result.get('angle_deg') is not None and old.get('angle_deg') is not None:
+        dang = abs(result['angle_deg'] - old['angle_deg'])
+        if dang > 1.0:
+            print(f'note: re-analysis angle differs by {dang:.1f}° from result.json')
     frames = {pth: T for pth, T in load_frames(data_dir, 'start') + load_frames(data_dir, 'end')}
     model_dir = assemble_model(geom, paths, states, W, result, a.out_dir,
                                os.path.basename(os.path.normpath(data_dir)), frames_by_path=frames)
+    if not model_dir:
+        sys.exit(1)
     if model_dir:
         mj = json.load(open(os.path.join(model_dir, 'model.json')))
         print(json.dumps(dict(model_dir=model_dir, joint=mj['joint']['type'], labelling=mj['labelling'],

@@ -62,3 +62,23 @@ def test_assemble_tiny_part_warns_and_no_hull(tmp_path, monkeypatch):
     m = load_model(art.assemble_model(geom, paths, s['states'], W, result, str(tmp_path), 'x'))
     assert 'part sparsely observed' in m['warnings']
     assert m['part_hull'] is None
+
+
+def test_assemble_part_under_500_points_gets_no_hull(tmp_path, monkeypatch):
+    import artsfm.articulate as art
+    s, geom, W, result = _synthetic_inputs()
+    paths = [str(tmp_path / f'v{i}.png') for i in range(len(s['states']))]
+    monkeypatch.setattr(art, 'foreground_masks', lambda p, hw, confs=None: (s['alphas'], 'alpha'))
+    real = art.label_dense
+
+    def few_part(*a, **k):
+        views = real(*a, **k)
+        for f, v in enumerate(views):
+            part = np.flatnonzero(v['label'] == 1)
+            v['label'][part[(10 if f == 0 else 0):]] = 0   # keep 10 non-coplanar part points in view 0 only
+        return views
+    monkeypatch.setattr(art, 'label_dense', few_part)
+    from artsfm.model_io import load_model
+    m = load_model(art.assemble_model(geom, paths, s['states'], W, result, str(tmp_path), 'x'))
+    assert 0 < len(m['part']['pts']) < 500
+    assert 'part sparsely observed' in m['warnings'] and m['part_hull'] is None
