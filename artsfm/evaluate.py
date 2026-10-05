@@ -1,0 +1,129 @@
+"""Align the reconstruction to MPArt-90 ground truth, score the joint, and write outputs."""
+import json
+import os
+
+import numpy as np
+import trimesh
+from scipy.spatial import cKDTree
+
+from artsfm.factorize import as_views
+
+GT_TYPES = {'rotate': 'revolute', 'translate': 'prismatic'}
+
+
+def umeyama(src, dst):
+    ms, md = src.mean(0), dst.mean(0)
+    S, D = src - ms, dst - md
+    U, sig, Vt = np.linalg.svd(D.T @ S / len(src))
+    E = np.diag([1.0, 1.0, np.sign(np.linalg.det(U @ Vt))])
+    R = U @ E @ Vt
+    s = float(np.trace(np.diag(sig) @ E) / (S ** 2).sum(1).mean())
+    return s, R, md - s * R @ ms
+
+
+def axis_angle_err(d1, d2):
+    d1, d2 = np.asarray(d1, float), np.asarray(d2, float)
+    c = abs(d1 @ d2) / np.linalg.norm(d1) / np.linalg.norm(d2)
+    return float(np.rad2deg(np.arccos(np.clip(c, -1, 1))))
+
+
+def line_distance(o1, d1, o2, d2):
+    o1, d1, o2, d2 = (np.asarray(x, float) for x in (o1, d1, o2, d2))
+    n = np.cross(d1, d2)
+    if np.linalg.norm(n) < 1e-9 * np.linalg.norm(d1) * np.linalg.norm(d2):
+        return float(np.linalg.norm(np.cross(o2 - o1, d1)) / np.linalg.norm(d1))
+    return float(abs((o2 - o1) @ n) / np.linalg.norm(n))
+
+
+def load_gt_joint(data_dir):
+    with open(os.path.join(data_dir, 'gt', 'trans.json')) as f:
+        info = json.load(f)['trans_info']
+    if len(info) != 1:
+        raise ValueError(f'v1 handles single-joint objects; {data_dir} has {len(info)} joints')
+    j = info[0]
+    lr = j[j['type']]
+    return dict(type=GT_TYPES[j['type']], axis_o=np.array(j['axis']['o'], float),
+                axis_d=np.array(j['axis']['d'], float), state_change=abs(lr['l'] - lr['r']))
+
+
+def view0_to_gt(x, cam2w0, sim, is_dir=False):
+    s, R, t = sim
+    x = np.atleast_2d(x)
+    if is_dir:
+        return x @ cam2w0[:3, :3].T @ R.T
+    world = x @ cam2w0[:3, :3].T + cam2w0[:3, 3]
+    return s * world @ R.T + t
+
+
+def gt_part_labels(points_gt, data_dir, n_samples=20000):
+    clouds = []
+    for name in ('static', 'dynamic'):
+        mesh = trimesh.load(os.path.join(data_dir, 'gt', 'start', f'{name}.obj'), force='mesh')
+        clouds.append(mesh.sample(n_samples))
+    d = np.stack([cKDTree(c).query(points_gt)[0] for c in clouds], 1)
+    return d.argmin(1), d.min(1)
+
+
+def evaluate(result, W, geom, view_paths, frames_by_path, data_dir):
+    gt = load_gt_joint(data_dir)
+    est_c = geom['cam2w'][:, :3, 3]
+    gt_c = np.array([frames_by_path[p][:3, 3] for p in view_paths])
+    sim = umeyama(est_c, gt_c)
+    cam2w0 = geom['cam2w'][0]
+    m = dict(gt_type=gt['type'], pred_type=result['type'], type_correct=result['type'] == gt['type'],
+             sim_scale=sim[0],
+             cam_align_rmse=float(np.sqrt(((sim[0] * est_c @ sim[1].T + sim[2] - gt_c) ** 2).sum(1).mean())))
+
+    pts_gt = view0_to_gt(as_views(W)[0], cam2w0, sim)
+    gt_lab, dist = gt_part_labels(pts_gt, data_dir)
+    lab = result['labels']
+    seg = lab >= 0
+    m['seg_accuracy'] = float((lab[seg] == gt_lab[seg]).mean()) if seg.any() else None
+    m['track_to_mesh_median'] = float(np.median(dist))
+    m['n_tracks'] = int(W.shape[1])
+
+    if result['axis_d'] is not None:
+        d_gt = view0_to_gt(result['axis_d'], cam2w0, sim, is_dir=True)[0]
+        m['axis_angle_err_deg'] = axis_angle_err(d_gt, gt['axis_d'])
+        m['pred_axis_d_gt'] = d_gt.tolist()
+        if result['axis_o'] is not None and gt['type'] == 'revolute':
+            o_gt = view0_to_gt(result['axis_o'], cam2w0, sim)[0]
+            m['axis_pos_err'] = line_distance(o_gt, d_gt, gt['axis_o'], gt['axis_d'])
+            m['pred_axis_o_gt'] = o_gt.tolist()
+        if gt['type'] == 'revolute' and result['angle_deg'] is not None:
+            m['state_err'] = abs(result['angle_deg'] - gt['state_change'])
+        elif gt['type'] == 'prismatic' and result['disp'] is not None:
+            m['state_err'] = abs(sim[0] * result['disp'] - gt['state_change'])
+    return m
+
+
+def _jsonable(x):
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    if isinstance(x, (np.floating, np.integer, np.bool_)):
+        return x.item()
+    if isinstance(x, dict):
+        return {k: _jsonable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_jsonable(v) for v in x]
+    return x
+
+
+def write_outputs(out_dir, result, metrics, W, geom):
+    os.makedirs(out_dir, exist_ok=True)
+    res = {k: v for k, v in result.items() if k != 'labels'}
+    with open(os.path.join(out_dir, 'result.json'), 'w') as f:
+        json.dump(_jsonable(dict(result=res, metrics=metrics)), f, indent=2)
+    np.savez(os.path.join(out_dir, 'W.npz'), W=W, labels=result['labels'])
+
+    # tracks in view-0 frame coloured by segment, plus the axis as a dense line of points
+    pts = as_views(W)[0]
+    palette = {0: [160, 160, 160, 255], 1: [230, 60, 40, 255], -1: [40, 40, 40, 255]}
+    cols = np.array([palette[int(l)] for l in result['labels']], np.uint8)
+    if result['axis_d'] is not None:
+        o = result['axis_o'] if result['axis_o'] is not None else pts[result['labels'] == 1].mean(0)
+        span = np.linalg.norm(pts - pts.mean(0), axis=1).max()
+        line = o + np.linspace(-span, span, 400)[:, None] * result['axis_d']
+        pts = np.vstack([pts, line])
+        cols = np.vstack([cols, np.tile([40, 90, 230, 255], (len(line), 1)).astype(np.uint8)])
+    trimesh.PointCloud(pts, colors=cols).export(os.path.join(out_dir, 'articulation.ply'))
