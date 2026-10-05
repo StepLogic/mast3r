@@ -84,15 +84,20 @@ Model frame = the view-0 camera frame (OpenCV), the frame in which `analyze()` r
 
 | Case | Condition | Evidence |
 |---|---|---|
-| support | u inside the image, foreground, and \|z − D\| < δ·z | support |
+| support | u inside the image, foreground, \|z − D\| < δ·z **and** colour match: max-channel \|RGB − RGB(u)\| < `ctol` | support |
 | contradiction (free-space violation) | z < D − δ·z | contradiction |
 | occlusion | z > D + δ·z | none |
 | no observation | outside the image or background | none |
 
    Score per hypothesis = supports − contradictions.
+
+   **Reliable pixels only.** A lookup counts only where the observed pixel is away from a depth discontinuity: the 3×3 depth range there must be below 0.1 × depth. Otherwise it gives no evidence, because at depth edges a one-pixel shift reads a different surface.
+
+   **Why colour.** Depth alone cannot see motion *along* a surface. A body point on a face parallel to a drawer's travel, shifted by T, still lands on that face, so both hypotheses get support. This is the 3D aperture problem. Prototype, revolute, δ = 0.03, no noise: depth-only 94.3% vs depth + colour 96.4%. Prismatic: 93.3% vs 98.2%.
 5. **Decision.** The winning hypothesis labels the point if its score exceeds the other by at least `margin` and it has at least one support. Otherwise the **fallback** applies:
    - majority vote of the k = 7 nearest labelled tracks (`analyze` labels 0/1; view-0 track points);
-   - if the nearest such track is farther than 0.1 × the object RMS radius, the point is **unlabelled** and dropped.
+   - if the nearest such track is farther than 0.3 × the object RMS radius, the point is **unlabelled** and dropped.
+   - A vote over hypothesis-labelled dense points was also prototyped. It helped revolute but hurt prismatic (90% vs 93%), so tracks stay the fallback.
 6. **Fusion.**
    - base = body points.
    - part = start-view part points ∪ T⁻¹·(end-view part points), so all part points sit at joint 0.
@@ -104,10 +109,22 @@ Model frame = the view-0 camera frame (OpenCV), the frame in which `analyze()` r
    - `free` joint → "screw joint (not representable in URDF); URDF export disabled".
 9. **Refusal:** if `result.status != "ok"`, no model is written and the reason is printed.
 
-Defaults are δ = 0.02 and `margin` = 1. Both are calibrated on synthetic data (§8.3), and the calibrated values are recorded here.
+Defaults are δ = 0.08, `ctol` = 0.15 and `margin` = 1. They come from prototyping on 128×96 ray-cast scenes with body-fixed textures (3 views per state, 150 tracks, 3 seeds); Task-level calibration in §8.3 confirms or replaces them.
+
+| scene | noise | δ = 0.03 | δ = 0.05 | δ = 0.08 |
+|---|---|---|---|---|
+| revolute | 0 | 96.4% | 96.3% | 96.3% |
+| revolute | 1% | 92.7% | 94.1% | 94.4% |
+| revolute | 2% | 86.4% | 89.8% | 91.0% |
+| prismatic | 0 | 98.2% | 98.2% | 98.3% |
+| prismatic | 1% | 98.1% | 98.1% | 98.2% |
+| prismatic | 2% | 97.2% | 97.6% | 97.8% |
+
+Each cell is accuracy on labelled points. Unlabelled points are 2–7% of the total.
 
 ## 5. URDF export (`artsfm/urdf.py`)
 
+- MuJoCo needs `<mujoco><compiler strippath="false" discardvisual="false"/></mujoco>` inside the URDF so that `meshes/…` paths resolve. Setting `meshdir` doubles the path; this was verified with MuJoCo 3.3. Visual and collision elements get names, which silences duplicate-name warnings.
 - Follows GaussianArt `export_isaac.py` conventions:
   - links `base` and `link_1`, joint `joint_1`;
   - files `meshes/<link>.obj` (visual) and `meshes/<link>_collision.obj`, both the convex hull in v1;
@@ -157,17 +174,18 @@ Defaults are δ = 0.02 and `margin` = 1. Both are calibrated on synthetic data (
 ## 8. Testing
 
 1. **Synthetic dense scenes** (`tests/synth_dense.py`):
-   - A box body with a hinged door (or sliding drawer), as trimesh meshes.
-   - Pinhole depth maps at 64×48 for 3 start and 3 end views, from trimesh ray casting, with an alpha mask and per-pixel GT labels.
+   - A box body with a hinged door (or sliding drawer), as oriented boxes.
+   - Pinhole depth maps at 128×96 for 3 start and 3 end views, from exact ray/oriented-box intersection in numpy (trimesh ray casting needs `rtree`, which is not installed), with an alpha mask and per-pixel GT labels.
+   - **Textures are fixed to each body's own frame**, so the door's pattern moves with the door. Colour-coding by label would make the colour test trivially perfect.
    - Optional relative depth noise.
 2. **`articulate` tests:**
-   - pixel labelling accuracy > 95% (noise-free) and > 90% at 2% depth noise;
+   - pixel labelling accuracy on labelled points > 95% (noise-free) and > 90% at 2% depth noise, for revolute and prismatic;
    - near-axis points go to the fallback;
    - occluded predictions give no contradictions;
    - fused end-view part points mapped by T⁻¹ coincide with start-view part points (median distance < 2× noise);
    - `model.json` round-trips;
    - refusal on a non-`ok` result.
-3. **Calibration:** sweep δ ∈ {0.01, 0.02, 0.03, 0.05} × `margin` ∈ {1, 2} over noise {0, 0.01, 0.02}. Pick the best mean accuracy and record it in §4.
+3. **Calibration:** sweep δ ∈ {0.03, 0.05, 0.08} × `ctol` ∈ {0.1, 0.15, 0.25} × `margin` ∈ {1, 2} over noise {0, 0.01, 0.02}. Pick the best mean accuracy and record it in §4.
 4. **`urdf` tests:**
    - the MuJoCo forward-kinematics check passes for revolute and prismatic;
    - `up` maps to +z;
