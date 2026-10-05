@@ -223,3 +223,41 @@ def estimate_up(cam2w):
     ups = np.stack([R0.T @ c[:3, :3] @ np.array([0, -1.0, 0]) for c in cam2w])
     u = ups.mean(0)
     return u / np.linalg.norm(u)
+
+
+def crop_like_dust3r(img, size=512, patch_size=16):
+    """Resize + centre-crop exactly as dust3r.utils.image.load_images does (size != 224)."""
+    from PIL import Image, ImageOps
+    img = ImageOps.exif_transpose(img)
+    S = max(img.size)
+    interp = Image.LANCZOS if S > size else Image.BICUBIC
+    img = img.resize(tuple(int(round(x * size / S)) for x in img.size), interp)
+    W, H = img.size
+    cx, cy = W // 2, H // 2
+    halfw = ((2 * cx) // patch_size) * patch_size / 2
+    halfh = ((2 * cy) // patch_size) * patch_size / 2
+    if W == H:
+        halfh = 3 * halfw / 4
+    return img.crop((cx - halfw, cy - halfh, cx + halfw, cy + halfh))
+
+
+def foreground_masks(paths, model_hw, confs=None, conf_thr=1.5):
+    """Object masks at model resolution: image alpha when present, else MASt3R confidence."""
+    from PIL import Image
+    masks, sources = [], set()
+    for i, p in enumerate(paths):
+        im = Image.open(p)
+        if im.mode in ('RGBA', 'LA') or 'transparency' in im.info:
+            a = np.asarray(crop_like_dust3r(im.convert('RGBA').getchannel('A')))
+            m = a > 0
+            sources.add('alpha')
+        elif confs is not None:
+            m = np.asarray(confs[i]) > conf_thr
+            sources.add('confidence')
+        else:
+            m = np.ones(model_hw, bool)
+            sources.add('none')
+        if m.shape != tuple(model_hw):
+            raise ValueError(f'mask for {p} has shape {m.shape}, expected {tuple(model_hw)}')
+        masks.append(m)
+    return masks, '+'.join(sorted(sources))

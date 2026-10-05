@@ -17,6 +17,8 @@ def test_two_view_reconstruction(tmp_path):
     H, W = g['depths'][0].shape
     assert (H, W) == scene.imgs[0].shape[:2]
     assert np.isfinite(g['depths'][0]).all() and (g['depths'][0] > 0).mean() > 0.9
+    assert len(g['imgs']) == 2 and g['imgs'][0].shape == (H, W, 3)
+    assert len(g['confs']) == 2 and g['confs'][0].shape == (H, W)
     corres = load_pair_correspondences(str(tmp_path), paths)
     assert (0, 1) in corres and len(corres[0, 1][0]) > 100
 

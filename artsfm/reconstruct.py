@@ -36,8 +36,11 @@ def run_sparse_ga(image_paths, cache_dir, weights, device='cpu', optim_level='re
 
 def extract_geometry(scene):
     with torch.no_grad():
-        _, depthmaps, _ = scene.get_dense_pts3d(clean_depth=False)
+        _, depthmaps, confs = scene.get_dense_pts3d(clean_depth=False)
     K = np.stack([k.detach().cpu().numpy() for k in scene.intrinsics])
     cam2w = scene.get_im_poses().detach().cpu().numpy()
-    depths = [d.detach().cpu().numpy().reshape(im.shape[:2]) for d, im in zip(depthmaps, scene.imgs)]
-    return dict(K=K, cam2w=cam2w, depths=depths)
+    shapes = [im.shape[:2] for im in scene.imgs]
+    depths = [d.detach().cpu().numpy().reshape(s) for d, s in zip(depthmaps, shapes)]
+    confs = [c.detach().cpu().numpy().reshape(s) for c, s in zip(confs, shapes)]
+    imgs = [np.asarray(im, float) for im in scene.imgs]
+    return dict(K=K, cam2w=cam2w, depths=depths, imgs=imgs, confs=confs)
