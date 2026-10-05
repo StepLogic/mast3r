@@ -145,6 +145,8 @@ Non-degeneracy requires rank(M_start) = rank(M_end) = 4, which means at least 2 
 - θ_τ is insensitive in [1.5°, 4.5°]. τ is the robustness lever.
 - τ = 0.02 and τ = 0.03 tie for noise ≤ 0.02, but only τ = 0.03 stays at 100% at σ = 0.03, so it was chosen.
 
+**Known limitation (final review):** τ scales with scene depth, not object size. A part whose per-track RMS displacement is below τ (≈ 3% of depth, e.g. about 10 cm at 3.5 m) is absorbed into the base and reported `rigid`. Short drawer pulls can therefore be missed. Calibration only covered 0.25-unit travel and 40° rotation.
+
 Type accuracy by setting and noise level:
 
 ```

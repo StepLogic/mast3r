@@ -83,6 +83,15 @@ def gt_part_labels(points_gt, data_dir, n_samples=20000):
     return d.argmin(1), d.min(1)
 
 
+def segmentation_accuracy(pred, gt):
+    """Accuracy of base/part labels (outliers -1 ignored), invariant to which body is called base."""
+    seg = pred >= 0
+    if not seg.any():
+        return None, False
+    acc = float((pred[seg] == gt[seg]).mean())
+    return (1.0 - acc, True) if acc < 0.5 else (acc, False)
+
+
 def evaluate(result, W, geom, view_paths, frames_by_path, data_dir):
     gt = load_gt_joint(data_dir)
     est_c = geom['cam2w'][:, :3, 3]
@@ -97,8 +106,7 @@ def evaluate(result, W, geom, view_paths, frames_by_path, data_dir):
     pts_gt = view0_to_gt(as_views(W)[0], cam2w0, sim)
     gt_lab, dist = gt_part_labels(pts_gt, data_dir)
     lab = result['labels']
-    seg = lab >= 0
-    m['seg_accuracy'] = float((lab[seg] == gt_lab[seg]).mean()) if seg.any() else None
+    m['seg_accuracy'], m['seg_labels_swapped'] = segmentation_accuracy(lab, gt_lab)
     m['track_to_mesh_median'] = float(np.median(dist))
     m['n_tracks'] = int(W.shape[1])
 

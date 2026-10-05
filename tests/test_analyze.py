@@ -116,3 +116,33 @@ def test_tracks_assigned_to_better_model():
     rp = residuals(W, fit_motion(W, np.flatnonzero(lab == 1)))
     assert (rb[lab == 0] <= rp[lab == 0] + 1e-9).all()
     assert (rp[lab == 1] <= rb[lab == 1] + 1e-9).all()
+
+
+@pytest.mark.parametrize('seed', range(5))
+def test_prismatic_axis_not_contaminated_by_rotation_noise(seed):
+    W, states, labels, gt = make_scene('prismatic', noise=0.02, seed=seed)
+    r = analyze(W, states)
+    assert r['type'] == 'prismatic'
+    assert axis_err_deg(r['axis_d'], gt['axis_d']) < 2.0
+    assert abs(r['disp'] - gt['disp']) < 0.01
+
+
+def test_part_sharing_base_motion_is_not_a_joint(monkeypatch):
+    import artsfm.factorize as fz
+    W, states, labels, gt = make_scene('none', noise=0.01)
+    real = fz.ransac_rigid
+    calls = []
+
+    def fake(W_, cand, tau, n_iter=500, rng=None):
+        calls.append(1)
+        if len(calls) == 1:  # base: everything except 10 base tracks
+            m = real(W_, cand, tau, n_iter, rng)
+            m[:10] = False
+            return m
+        out = np.zeros(W_.shape[1], bool)
+        out[:10] = True       # "part" = 10 tracks that actually fit the base better
+        return out
+    monkeypatch.setattr(fz, 'ransac_rigid', fake)
+    r = fz.analyze(W, states, fz.Params(min_part_frac=0.0))
+    assert r['status'] in ('rigid', 'ambiguous_small_motion')
+    assert r['axis_d'] is None

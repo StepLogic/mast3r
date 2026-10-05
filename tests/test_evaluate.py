@@ -80,3 +80,14 @@ def test_gt_part_labels_from_camera_frame_ply(tmp_path):
     lab, dist = gt_part_labels(np.array([[0.5, 0, 0], [2.5, 0, 0], [0, 0.5, 0.1]]), str(tmp_path))
     assert lab.tolist() == [0, 1, 0]
     assert dist.max() < 0.05
+
+
+def test_segmentation_accuracy_invariant_to_base_part_swap():
+    from artsfm.evaluate import segmentation_accuracy
+    gt = np.array([0, 0, 0, 1, 1, 0])
+    pred = np.array([1, 1, 1, 0, -1, 1])   # base/part swapped; -1 ignored
+    acc, flipped = segmentation_accuracy(pred, gt)
+    assert acc == 1.0 and flipped
+    acc, flipped = segmentation_accuracy(np.array([0, 0, 1, 1, 1, 0]), gt)
+    assert abs(acc - 5 / 6) < 1e-12 and not flipped
+    assert segmentation_accuracy(np.array([-1, -1]), np.array([0, 1])) == (None, False)

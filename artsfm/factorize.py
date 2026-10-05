@@ -114,12 +114,25 @@ def relative_motion(W, states, base_idx, part_idx):
     Base motion per view maps view-0 coordinates into view f; inverting it brings
     the part's observations back into the view-0 (base) frame, averaged per state.
     """
+    P_start, P_end = _part_by_state(W, states, base_idx, part_idx)
+    return kabsch(P_start, P_end)
+
+
+def part_shift(W, states, base_idx, part_idx):
+    """Centroid displacement of the part between states, in the view-0 frame.
+
+    For a prismatic joint this is the translation, free of the rotation-noise lever arm
+    (|centroid| ~ one depth) that contaminates Kabsch's b.
+    """
+    P_start, P_end = _part_by_state(W, states, base_idx, part_idx)
+    return P_end.mean(0) - P_start.mean(0)
+
+
+def _part_by_state(W, states, base_idx, part_idx):
     X = as_views(W)
     Mb = fit_motion(W, base_idx)
     in_base = np.stack([(X[f][part_idx] - Mb[f, :, 3]) @ Mb[f, :, :3] for f in range(len(X))])
-    P_start = in_base[states == 0].mean(0)
-    P_end = in_base[states == 1].mean(0)
-    return kabsch(P_start, P_end)
+    return in_base[states == 0].mean(0), in_base[states == 1].mean(0)
 
 
 def screw(A, b):
@@ -191,6 +204,8 @@ def analyze(W, states, params=Params()):
         if (new_part == part).all():
             break
         part, base = new_part, both & ~new_part
+    if part.sum() < max(params.min_part, params.min_part_frac * N, 3):
+        return _result('rigid', f'part has {int(part.sum())} tracks after reassignment', labels, type='rigid')
     labels[base], labels[part] = 0, 1
     bi, pi = np.flatnonzero(base), np.flatnonzero(part)
 
@@ -202,15 +217,17 @@ def analyze(W, states, params=Params()):
 
     A, b = relative_motion(W, states, bi, pi)
     sc = screw(A, b)
+    shift = part_shift(W, states, bi, pi)
     common = dict(principal_angles=angles.tolist(), scale=radius)
-    if sc['angle_deg'] < params.min_angle_deg and sc['disp'] < params.min_disp_frac * radius:
+    if sc['angle_deg'] < params.min_angle_deg and np.linalg.norm(shift) < params.min_disp_frac * radius:
         return _result('ambiguous_small_motion', 'part motion below thresholds', labels, **common)
     if jtype == 'rigid':
         return _result('rigid', 'subspaces coincide', labels, type='rigid', **common)
 
     r = _result('ok', '', labels, type=jtype, **common)
     if jtype == 'prismatic':
-        r.update(axis_d=b / np.linalg.norm(b), axis_o=None, angle_deg=0.0, disp=sc['disp'])
+        r.update(axis_d=shift / np.linalg.norm(shift), axis_o=None, angle_deg=0.0,
+                 disp=float(np.linalg.norm(shift)))
     else:
         r.update(axis_d=sc['axis_d'], axis_o=sc['axis_o'], angle_deg=sc['angle_deg'],
                  disp=sc['disp_along'])
