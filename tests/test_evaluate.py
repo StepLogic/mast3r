@@ -91,3 +91,9 @@ def test_segmentation_accuracy_invariant_to_base_part_swap():
     acc, flipped = segmentation_accuracy(np.array([0, 0, 1, 1, 1, 0]), gt)
     assert abs(acc - 5 / 6) < 1e-12 and not flipped
     assert segmentation_accuracy(np.array([-1, -1]), np.array([0, 1])) == (None, False)
+
+
+def test_gt_part_track_count_metric():
+    from artsfm.evaluate import track_label_counts
+    c = track_label_counts(np.array([0, 1, -1, 1]), np.array([1, 1, 1, 0]))
+    assert c == dict(n_gt_part_tracks=3, n_pred_part_on_gt_part=1, n_pred_outlier_on_gt_part=1)

@@ -92,6 +92,14 @@ def segmentation_accuracy(pred, gt):
     return (1.0 - acc, True) if acc < 0.5 else (acc, False)
 
 
+def track_label_counts(pred, gt):
+    """How many tracks lie on the GT moving part, and where the method put them."""
+    on_part = gt == 1
+    return dict(n_gt_part_tracks=int(on_part.sum()),
+                n_pred_part_on_gt_part=int((on_part & (pred == 1)).sum()),
+                n_pred_outlier_on_gt_part=int((on_part & (pred == -1)).sum()))
+
+
 def evaluate(result, W, geom, view_paths, frames_by_path, data_dir):
     gt = load_gt_joint(data_dir)
     est_c = geom['cam2w'][:, :3, 3]
@@ -107,6 +115,7 @@ def evaluate(result, W, geom, view_paths, frames_by_path, data_dir):
     gt_lab, dist = gt_part_labels(pts_gt, data_dir)
     lab = result['labels']
     m['seg_accuracy'], m['seg_labels_swapped'] = segmentation_accuracy(lab, gt_lab)
+    m.update(track_label_counts(lab, gt_lab))
     m['track_to_mesh_median'] = float(np.median(dist))
     m['n_tracks'] = int(W.shape[1])
 
