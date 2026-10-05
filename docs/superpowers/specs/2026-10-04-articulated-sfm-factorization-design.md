@@ -61,13 +61,15 @@ tests/
 
 ### 3.2 `reconstruct.py`: reconstruction
 - Run `sparse_global_alignment` on the 2K images with a **complete** pair graph. That guarantees cross-state matches and stays cheap at 2K ≈ 10.
+- **Known intrinsics** (default): every view's K is initialised from the dataset's `camera_angle_x`, scaled to the model input (long side 512, centre crop). MASt3R's own focal estimates on MPArt-90 renders were ≈450 px against a true 711 px, which distorts metric rigidity. `--estimate_intrinsics` disables this. Measured on 45166, median track-to-GT-surface distance: estimated K 0.52; known K + `coarse` 0.70; known K + `refine` 0.10.
 - The default optimisation level is `refine`, which keeps per-view depth from being warped to fit a static scene and bending the moving part. `refine+depth` is an ablation option.
 - Outputs per view: intrinsics K_f, depthmap D_f, cam-to-world pose, and the cached pairwise correspondences (`corres` files written by `forward_mast3r`).
 - The static GA treats the moving part as an outlier. This is acceptable because only per-view depth is consumed downstream, not the fused cloud.
 
 ### 3.3 `tracks.py`: tracks and measurement matrix
-- Chain pairwise correspondences into multi-view tracks with union-find on (view, pixel) nodes. Drop tracks with conflicting pixels in one view.
-- Keep only tracks observed in all 2K views.
+- Build **star tracks anchored on view 0**: group view 0's direct (0, f) matches by 8 px view-0 cell, take the median view-f pixel, and drop the cell for that view if its matches spread more than 4 px.
+- Keep only cells matched in all 2K − 1 other views.
+- Transitive union-find chaining was tried first. On real data it percolated into a single 6,881-node component and produced 0 tracks.
 - Lift each observation to camera-frame 3D: `X = D_f(p) · K_f^{-1} [p; 1]`.
 - Build `W ∈ R^{3F × N}`, F = 2K, with one column per track and 3 rows per view. Also return the per-view state labels and the track pixels (for visualisation and segmentation scoring).
 
@@ -75,13 +77,17 @@ tests/
 See §4.
 
 ### 3.5 `evaluate.py`: evaluation and outputs
-- Align the reconstruction to the GT frame with a Sim(3) (Umeyama) fit between estimated and GT camera centres of the selected views. Transform the estimated axis into the GT frame.
+- Align the reconstruction to the GT frame with a Sim(3). Rotation comes from camera orientations (GT is OpenGL, converted to OpenCV), then scale and translation from camera centres. Centre-only Umeyama is ill-conditioned for clustered views. Transform the estimated axis into the GT frame.
+- **GT frames** (verified):
+  - Cameras, `points3d.ply` and `gt/{start,end}/*_rotate.ply` share one frame.
+  - The `.obj` meshes do not.
+  - `trans.json` axes must be mapped with GaussianArt's `R_coord = [[0,-1,0],[1,0,0],[0,0,1]]ᵀ`, as in `eval_axis.read_gt`, with motion angle `r − l`. Rotating `start_dynamic_rotate.ply` that way reproduces `end_dynamic_rotate.ply` exactly.
 - Metrics:
   - joint-type correctness;
   - axis-direction error (degrees, sign-agnostic);
   - axis-position error: the distance between the estimated and GT axis lines, as the closest-point distance for revolute joints only;
   - joint-state error: rotation angle against GT `|l − r|` in degrees, or translation against GT `|l − r|`;
-  - segmentation accuracy of base/part track labels against GT part labels. GT labels come from mapping each track's view-0 3D point into the GT frame and labelling it by the nearer GT mesh (`gt/start/static.obj` vs `dynamic.obj`). The median track-to-mesh distance is reported as an alignment sanity check.
+  - segmentation accuracy of base/part track labels against GT part labels. GT labels come from mapping each track's view-0 3D point into the GT frame and labelling it by the nearer camera-frame GT surface (`gt/start/start_static_rotate.ply` vs `start_dynamic_rotate.ply`). `semantics.npy` is not used, because its label convention differs between objects. The median track-to-mesh distance is reported as an alignment sanity check.
 - Outputs to `out_dir`:
   - `result.json`: status, type, axis, state, metrics, thresholds used;
   - `articulation.ply`: tracks coloured by segment, plus a line for the axis;
