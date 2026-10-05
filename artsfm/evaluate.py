@@ -164,3 +164,24 @@ def write_outputs(out_dir, result, metrics, W, geom):
         pts = np.vstack([pts, line])
         cols = np.vstack([cols, np.tile([40, 90, 230, 255], (len(line), 1)).astype(np.uint8)])
     trimesh.PointCloud(pts, colors=cols).export(os.path.join(out_dir, 'articulation.ply'))
+
+
+def model_label_accuracy(model_dir, data_dir):
+    """Fraction of base.ply / part.ply points whose nearest camera-frame GT surface agrees (start state)."""
+    from artsfm.model_io import load_model
+    m = load_model(model_dir)
+    g = m.get('gt_frame')
+    if not g:
+        raise ValueError('model has no gt_frame (built without GT poses)')
+    sim = (float(g['scale']), np.asarray(g['sim_R'], float), np.asarray(g['sim_t'], float))
+    cam2w0 = np.asarray(g['cam2w0'], float)
+    out = {}
+    for name, want in (('base', 0), ('part', 1)):
+        P = m[name]['pts']
+        if not len(P):
+            out[f'{name}_acc'] = out[f'{name}_median_dist'] = None
+            continue
+        lab, dist = gt_part_labels(view0_to_gt(P, cam2w0, sim), data_dir)
+        out[f'{name}_acc'] = float((lab == want).mean())
+        out[f'{name}_median_dist'] = float(np.median(dist))
+    return out

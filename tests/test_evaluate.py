@@ -97,3 +97,19 @@ def test_gt_part_track_count_metric():
     from artsfm.evaluate import track_label_counts
     c = track_label_counts(np.array([0, 1, -1, 1]), np.array([1, 1, 1, 0]))
     assert c == dict(n_gt_part_tracks=3, n_pred_part_on_gt_part=1, n_pred_outlier_on_gt_part=1)
+
+
+def test_model_label_accuracy_on_toy(tmp_path):
+    import trimesh
+    from artsfm.evaluate import model_label_accuracy
+    from artsfm.model_io import write_model
+    (tmp_path / 'data/gt/start').mkdir(parents=True)
+    trimesh.creation.box([1, 1, 1]).export(tmp_path / 'data/gt/start/start_static_rotate.ply')
+    trimesh.creation.box([1, 1, 1]).apply_translation([3, 0, 0]).export(tmp_path / 'data/gt/start/start_dynamic_rotate.ply')
+    base = np.array([[0.5, 0, 0], [0, 0.5, 0.1], [2.6, 0, 0]])   # last one is wrong
+    part = np.array([[2.5, 0, 0], [3.5, 0.1, 0]])
+    gt_frame = dict(up=[0, 0, 1], scale=1.0, sim_R=np.eye(3), sim_t=np.zeros(3), cam2w0=np.eye(4))
+    write_model(tmp_path / 'model', dict(object='t', gt_frame=gt_frame),
+                dict(base=(base, np.ones((3, 3))), part=(part, np.ones((2, 3)))), dict(base=None, part=None))
+    r = model_label_accuracy(str(tmp_path / 'model'), str(tmp_path / 'data'))
+    assert abs(r['base_acc'] - 2 / 3) < 1e-12 and r['part_acc'] == 1.0
