@@ -1,3 +1,108 @@
+# Articulated SfM on MASt3R
+
+> This fork adds **articulated structure from motion** on top of MASt3R-SfM (branch `articulated-sfm`).
+> The original MASt3R README follows [below](#original-mast3r-readme).
+
+Given photos of an object in two articulation states (e.g. a cabinet door closed, then open), the `artsfm/` package:
+1. finds the moving part,
+2. classifies the joint (`rigid`, `prismatic`, `revolute` or `free`),
+3. recovers the joint axis and how far it moved,
+4. builds an interactive articulated point-cloud model and exports it as a URDF.
+
+The approach adapts Tresadern & Reid, *Articulated Structure From Motion by Factorization* (CVPR 2005). It keeps the paper's algebra: rank deficiency of the measurement matrix, RANSAC subspace segmentation, and joint recovery from the subspace intersection. But it builds the measurement matrix from MASt3R-SfM's **metric, camera-frame 3D points** instead of affine 2D tracks, so no affine-camera assumption or self-calibration step is needed.
+
+![Input: the same object in its start and end states](assets/artsfm/inputs_45247.png)
+
+*Input: MPArt-90 StorageFurniture_45247 in its start and end states (one of 5 views per state shown).*
+
+## Pipeline
+
+```mermaid
+flowchart LR
+    A[2K images<br/>K per state] --> B[views.py<br/>view selection]
+    B --> C[reconstruct.py<br/>MASt3R-SfM sparse GA<br/>known intrinsics]
+    C --> D[tracks.py<br/>star tracks on view 0<br/>lift to 3D → W]
+    D --> E[factorize.py<br/>RANSAC segmentation<br/>rank-based joint type<br/>axis + state]
+    E --> F[articulate.py<br/>dense labelling<br/>fused model]
+    F --> G[viewer / URDF]
+```
+
+| module | role |
+|---|---|
+| `artsfm/views.py` | Picks K start views clustered around a seed view, plus the nearest-direction end view for each. |
+| `artsfm/reconstruct.py` | Runs MASt3R-SfM sparse global alignment on all 2K views (complete pair graph, `refine`, dataset intrinsics). |
+| `artsfm/tracks.py` | Builds tracks anchored on view 0 and lifts them with per-view depth into **W** ∈ ℝ<sup>3F×N</sup>. |
+| `artsfm/factorize.py` | Segments base vs. part by RANSAC rigid fits, classifies the joint from principal angles between motion subspaces, and recovers the axis (nullspace) and joint state. |
+| `artsfm/articulate.py` | Labels every dense pixel as base or part with a motion hypothesis test, then fuses the clouds and builds convex hulls. |
+| `artsfm/evaluate.py` | Aligns to the ground-truth frame with Sim(3) and reports axis, state and segmentation errors. |
+| `artsfm/urdf.py` | Exports a URDF and checks its kinematics in MuJoCo. |
+| `artsfm/viewer.py`, `app_articulation.py` | Gradio viewer with a joint slider, play sweep and part colouring. |
+
+## Results
+
+The recovered model for 45247, swept from the start state to the observed opening. Top row: RGB. Bottom row: base (blue) vs. part (red). Yellow: recovered hinge axis.
+
+![Articulated model of 45247 swept through the recovered joint](assets/artsfm/model_sweep_45247.png)
+
+On 45247 the hinge axis is within **2.8°** of ground truth and the opening angle within **0.3°** (36.1° recovered). The base/part labels are swapped here: the door, which has more tracks, was taken as the base and the cabinet body as the part. Relative motion is unchanged by the swap.
+
+Dense labels for the four objects where a moving part was found, drawn on each object's reference photo (top: joint = 0, bottom: observed value):
+
+![Labelled models on reference photos](assets/artsfm/models_check.png)
+
+### MPArt-90 benchmark (9 single-joint objects, K = 5, CPU)
+
+| object | GT | predicted | axis err ° | state err |
+|---|---|---|---|---|
+| 45247 | revolute | **revolute** | **2.8** | **0.3°** |
+| 45166 | revolute | free | 12.5 | 17.6° |
+| 45176 | revolute | free | 12.4 | 20.6° |
+| 45855 | prismatic | free | 82.2 | 0.21 |
+| 35059, 41086, 45937, 47021 | revolute | rigid | – | – |
+| 46107 | prismatic | rigid | – | – |
+
+The joint type is correct on 1/9 objects and a moving part is detected on 4/9. The main failure modes are:
+- **Visibility from the seed view:** on several objects view 0 sees none of the moving part, or none of the base.
+- **Type classification under MASt3R depth noise:** noise of about 5% of the object radius pushes revolute joints past the fixed 3° principal-angle threshold, so they are labelled `free`.
+- **Low track yield on the part:** a track must be matched in all 2K views.
+
+Full numbers and analysis: [`docs/superpowers/results/2026-10-04-articulated-sfm-v1.md`](docs/superpowers/results/2026-10-04-articulated-sfm-v1.md) and [`docs/superpowers/results/2026-10-05-articulated-model-viewer.md`](docs/superpowers/results/2026-10-05-articulated-model-viewer.md). Design specs are in [`docs/superpowers/specs/`](docs/superpowers/specs/).
+
+## Usage
+
+Data: MPArt-90 objects with `start/` and `end/` states and `transforms_train_{start,end}.json`. Weights: `checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth` (see [Checkpoints](#checkpoints)).
+
+```bash
+# analyse one object (writes result.json, W.npz, articulation.ply) and build the model folder
+python3 run_articulation.py --data_dir /path/to/MPArt-90/StorageFurniture_45247 \
+    --out_dir outputs/artsfm/StorageFurniture_45247 --k 5 --build_model
+
+# rebuild only the articulated model from a finished run
+python3 build_model.py --out_dir outputs/artsfm/StorageFurniture_45247
+
+# run the 9-object benchmark (edit ROOT in the script to your data path)
+python3 run_articulation_benchmark.py --out_root outputs/artsfm
+
+# interactive viewer
+python3 app_articulation.py --root outputs/artsfm --port 7861
+
+# URDF export + MuJoCo check (revolute/prismatic joints only)
+python3 -m artsfm.urdf outputs/artsfm/StorageFurniture_45247/model
+```
+
+Tests: `python3 -m pytest -q tests` (98 tests). Most use synthetic articulated scenes. The two end-to-end reconstruction tests skip unless the weights and MPArt-90 data are present.
+
+## Limits and next steps
+- Two states and one moving part only. Ball joints can't be identified from two states.
+- View selection uses dataset poses. Choosing a seed view without ground truth is the most valuable next step.
+- `free` (screw) joints animate in the viewer but can't be exported to URDF.
+- URDF geometry is convex hulls, and scale is the reconstruction's own unless `--scale` is given.
+- Planned: partial tracks (seen in ≥2 views per state), and noise-aware model selection (GRIC/BIC) instead of a fixed threshold.
+
+---
+
+# Original MASt3R README
+
 ![banner](assets/mast3r.jpg)
 
 Official implementation of `Grounding Image Matching in 3D with MASt3R`  
