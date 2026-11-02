@@ -36,7 +36,7 @@ flowchart LR
 | `artsfm/articulate.py` | Labels every dense pixel as base or part with a motion hypothesis test, then fuses the clouds and builds convex hulls. |
 | `artsfm/evaluate.py` | Aligns to the ground-truth frame with Sim(3) and reports axis, state and segmentation errors. |
 | `artsfm/urdf.py` | Exports a URDF and checks its kinematics in MuJoCo. |
-| `artsfm/viewer.py`, `app_articulation.py` | Gradio viewer with a joint slider, play sweep and part colouring. |
+| `artsfm/webviewer.py`, `app_articulation.py` | three.js viewer: the clouds load once and the joint moves on the GPU, so the slider and Play run at frame rate. It's embedded in a Gradio app with a model picker and URDF export. |
 
 ## Results
 
@@ -83,14 +83,17 @@ python3 build_model.py --out_dir outputs/artsfm/StorageFurniture_45247
 # run the 9-object benchmark (edit ROOT in the script to your data path)
 python3 run_articulation_benchmark.py --out_root outputs/artsfm
 
-# interactive viewer
+# interactive viewer (gradio app: model picker, info, URDF export, embedded three.js view)
 python3 app_articulation.py --root outputs/artsfm --port 7861
+
+# standalone three.js page for one model (open in any browser; e.g. viewer.html#value=20&bypart&play)
+python3 -m artsfm.webviewer outputs/artsfm/StorageFurniture_45247/model -o viewer.html
 
 # URDF export + MuJoCo check (revolute/prismatic joints only)
 python3 -m artsfm.urdf outputs/artsfm/StorageFurniture_45247/model
 ```
 
-Tests: `python3 -m pytest -q tests` (98 tests). Most use synthetic articulated scenes. The two end-to-end reconstruction tests skip unless the weights and MPArt-90 data are present.
+Tests: `python3 -m pytest -q tests` (104 tests). Most use synthetic articulated scenes. The two end-to-end reconstruction tests skip unless the weights and MPArt-90 data are present.
 
 ## Limits and next steps
 - Two states and one moving part only. Ball joints can't be identified from two states.

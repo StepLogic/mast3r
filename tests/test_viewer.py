@@ -34,18 +34,15 @@ def test_list_models_only_valid(tmp_path):
     assert list_models(str(tmp_path)) == [str(tmp_path / 'A' / 'model')]
 
 
-def test_slider_and_sweep_units():
-    from artsfm.viewer import slider_spec, to_joint_value, sweep_values
+def test_slider_spec_units():
+    from artsfm.viewer import slider_spec
     j = dict(type='revolute', lower=0.0, upper=np.deg2rad(40), unit='rad')
     lo, hi, label = slider_spec(j)
     assert (lo, round(hi, 6), label) == (0.0, 40.0, 'degrees')
-    assert abs(to_joint_value(j, 20.0) - np.deg2rad(20)) < 1e-12
     lo, hi, _ = slider_spec(j, extend=True)
     assert lo == -20.0 and round(hi, 6) == 60.0
-    v = sweep_values(j, n=12)
-    assert v[0] == 0 and abs(max(v) - j['upper']) < 1e-12 and v[-1] == 0
     p = dict(type='prismatic', lower=0.0, upper=0.3, unit='recon')
-    assert slider_spec(p)[2] == 'reconstruction units' and to_joint_value(p, 0.1) == 0.1
+    assert slider_spec(p)[2] == 'reconstruction units'
 
 
 def test_info_markdown_mentions_warnings_and_metrics(tmp_path):
@@ -55,14 +52,3 @@ def test_info_markdown_mentions_warnings_and_metrics(tmp_path):
     m['warnings'] = ['part sparsely observed']
     txt = info_markdown(m, dict(metrics=dict(axis_angle_err_deg=2.7, state_err=0.4)))
     assert 'revolute' in txt and 'part sparsely observed' in txt and '2.7' in txt
-
-
-def test_range_update_clamps_value_when_narrowing():
-    from artsfm.viewer import range_update
-    j = dict(type='revolute', lower=0.0, upper=np.deg2rad(40), unit='rad')
-    lo, hi, v = range_update(j, True, -15.0)
-    assert lo == -20.0 and v == -15.0
-    lo, hi, v = range_update(j, False, -15.0)
-    assert (lo, v) == (0.0, 0.0)
-    lo, hi, v = range_update(j, False, 55.0)
-    assert round(v, 6) == 40.0

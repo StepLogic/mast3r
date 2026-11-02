@@ -1,4 +1,4 @@
-"""Pure helpers for the articulated-model viewer: model discovery, slider units, glb frames, info text."""
+"""Pure helpers for the articulated-model viewer: model discovery, slider units, glb export, info text."""
 import glob
 import os
 import tempfile
@@ -26,15 +26,6 @@ def slider_spec(joint, extend=False):
     if joint.get('unit') == 'rad':
         return float(np.rad2deg(lo)), float(np.rad2deg(hi)), 'degrees'
     return lo, hi, 'reconstruction units'
-
-
-def to_joint_value(joint, slider_value):
-    return float(np.deg2rad(slider_value)) if joint.get('unit') == 'rad' else float(slider_value)
-
-
-def sweep_values(joint, n=12):
-    up = list(np.linspace(0.0, float(joint['upper']), n // 2 + 1))
-    return up + up[-2::-1]
 
 
 def part_points_at(model, value):
@@ -112,9 +103,3 @@ def info_markdown(model, result=None):
         lines.append(f"- vs ground truth: axis error {m['axis_angle_err_deg']:.1f}°"
                      + (f", state error {m['state_err']:.1f}" if m.get('state_err') is not None else ''))
     return '\n'.join(lines)
-
-
-def range_update(joint, extend, value):
-    """Slider bounds for the current 'beyond observed range' setting, with the value clamped into them."""
-    lo, hi, _ = slider_spec(joint, extend)
-    return lo, hi, float(min(max(value, lo), hi))

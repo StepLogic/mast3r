@@ -21,3 +21,14 @@ def test_export_fn_produces_zip_and_check(tmp_path):
     m = load_model(_make_model(tmp_path / 'toy'))
     zip_path, msg = export_package(m, extend=False)
     assert zip_path.endswith('.zip') and 'PASS' in msg
+
+
+def test_viewer_iframe_writes_page_once(tmp_path, monkeypatch):
+    import app_articulation
+    from artsfm.model_io import load_model
+    monkeypatch.setattr(app_articulation, 'VIEWER_DIR', str(tmp_path / 'viewer'))
+    m = load_model(_make_model(tmp_path / 'toy'))
+    html = app_articulation.viewer_iframe(m)
+    pages = list((tmp_path / 'viewer').iterdir())
+    assert len(pages) == 1 and f'/gradio_api/file={pages[0]}' in html
+    assert app_articulation.viewer_iframe(m) == html and len(list((tmp_path / 'viewer').iterdir())) == 1
