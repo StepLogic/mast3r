@@ -48,7 +48,7 @@ The alignment-free check is below. Labelled points are drawn on each object's re
 
 ![labelled models on reference photos](img/2026-10-05-models-check.png)
 
-- **45247:** the lid and box body separate cleanly along the lid edge.
+- **45247:** base and part are **swapped**. The front door, which carries most of the tracks, was labelled base (blue). The cabinet body and top were labelled part (red). The split follows the door's top edge, with some red speckle on the door. The joint is unaffected: relative motion is the same either way, so the axis (2.8° error) and angle (0.3° error) stand. But the 45247 counts in the table above are swapped, and the exported URDF's `base` link is the door. *(Corrected 2026-11-02: this line originally said the lid and box body separate cleanly, which misread the image. See `assets/artsfm/model_sweep_45247.png`.)*
 - **45166:** the open door is separated from the body.
 - **45176:** the left door is correct, but a vertical strip on the right side is wrongly labelled part.
 - **45855:** the joint itself is wrong (prismatic detected as free), so the dense labels are noisy. Labelling can only be as good as the joint it is given.
